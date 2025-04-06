@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sky Survival ++ 🛩️</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      touch-action: manipulation;
+    }
+
+    body {
+      margin: 0;
+      background: #87CEEB;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 80vh;
+      background: linear-gradient(to bottom, #87CEEB, #e0f7ff);
+      border: 3px solid #fff;
+    }
+
+    #score {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-size: 24px;
+      font-weight: bold;
+      text-shadow: 1px 1px 2px #000;
+      z-index: 10;
+    }
+
+    #controls {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 10;
+    }
+
+    .row {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    #controls button {
+      font-size: 24px;
+      padding: 10px 15px;
+      border: none;
+      border-radius: 10px;
+      background-color: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="score">⏱️ 0s</div>
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Mobile Touch Controls -->
+  <div id="controls">
+    <div class="row">
+      <button data-dir="up">⬆️</button>
+    </div>
+    <div class="row">
+      <button data-dir="left">⬅️</button>
+      <button data-dir="shoot">🔫</button>
+      <button data-dir="right">➡️</button>
+    </div>
+    <div class="row">
+      <button data-dir="down">⬇️</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight * 0.8;
+
+    const scoreDisplay = document.getElementById('score');
+
+    const player = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      size: 40,
+      speed: 5,
+      emoji: "🛩️"
+    };
+
+    const hazards = [];
+    const hazardEmojis = ["🐦", "✈️", "🤖"];
+    const bullets = [];
+    const droneBullets = [];
+
+    const keys = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      shoot: false
+    };
+
+    let gameOver = false;
+    let startTime = Date.now();
+    let spawnRate = 1000;
+    let hazardSpeedMultiplier = 1;
+    let shootCooldown = 0;
+
+    // Keyboard controls
+    document.addEventListener("keydown", e => {
+      if (e.key === "ArrowUp") keys.up = true;
+      if (e.key === "ArrowDown") keys.down = true;
+      if (e.key === "ArrowLeft") keys.left = true;
+      if (e.key === "ArrowRight") keys.right = true;
+      if (e.key === " ") keys.shoot = true;
+    });
+
+    document.addEventListener("keyup", e => {
+      if (e.key === "ArrowUp") keys.up = false;
+      if (e.key === "ArrowDown") keys.down = false;
+      if (e.key === "ArrowLeft") keys.left = false;
+      if (e.key === "ArrowRight") keys.right = false;
+      if (e.key === " ") keys.shoot = false;
+    });
+
+    // Touch controls
+    document.querySelectorAll('#controls button').forEach(btn => {
+      btn.addEventListener('touchstart', e => {
+        const dir = btn.dataset.dir;
+        if (dir === "shoot") keys.shoot = true;
+        else keys[dir] = true;
+      });
+
+      btn.addEventListener('touchend', e => {
+        const dir = btn.dataset.dir;
+        if (dir === "shoot") keys.shoot = false;
+        else keys[dir] = false;
+      });
+    });
+
+    function spawnHazard() {
+      const size = 30;
+      const emoji = hazardEmojis[Math.floor(Math.random() * hazardEmojis.length)];
+      const side = Math.floor(Math.random() * 4);
+      let x, y, dx, dy;
+
+      if (side === 0) {
+        x = Math.random() * canvas.width;
+        y = -size;
+        dx = (Math.random() - 0.5) * 2 * hazardSpeedMultiplier;
+        dy = (Math.random() * 2 + 1) * hazardSpeedMultiplier;
+      } else if (side === 1) {
+        x = Math.random() * canvas.width;
+        y = canvas.height + size;
+        dx = (Math.random() - 0.5) * 2 * hazardSpeedMultiplier;
+        dy = (-Math.random() * 2 - 1) * hazardSpeedMultiplier;
+      } else if (side === 2) {
+        x = -size;
+        y = Math.random() * canvas.height;
+        dx = (Math.random() * 2 + 1) * hazardSpeedMultiplier;
+        dy = (Math.random() - 0.5) * 2 * hazardSpeedMultiplier;
+      } else {
+        x = canvas.width + size;
+        y = Math.random() * canvas.height;
+        dx = (-Math.random() * 2 - 1) * hazardSpeedMultiplier;
+        dy = (Math.random() - 0.5) * 2 * hazardSpeedMultiplier;
+      }
+
+      const isDrone = emoji === "🤖";
+      hazards.push({
+        x, y, dx, dy, emoji, size, isDrone,
+        shootTimer: isDrone ? Math.random() * 100 + 50 : 0
+      });
+    }
+
+    function shootBullet() {
+      bullets.push({
+        x: player.x + player.size / 2 - 4,
+        y: player.y,
+        width: 8,
+        height: 20,
+        speed: 7
+      });
+    }
+
+    function update() {
+      if (gameOver) return;
+
+      if (keys.up && player.y > 0) player.y -= player.speed;
+      if (keys.down && player.y < canvas.height - player.size) player.y += player.speed;
+      if (keys.left && player.x > 0) player.x -= player.speed;
+      if (keys.right && player.x < canvas.width - player.size) player.x += player.speed;
+
+      if (keys.shoot && shootCooldown <= 0) {
+        shootBullet();
+        shootCooldown = 15;
+      }
+      if (shootCooldown > 0) shootCooldown--;
+
+      for (let b of bullets) {
+        b.y -= b.speed;
+      }
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        if (bullets[i].y < -20) bullets.splice(i, 1);
+      }
+
+      for (let h of hazards) {
+        h.x += h.dx;
+        h.y += h.dy;
+
+        if (h.isDrone) {
+          h.shootTimer--;
+          if (h.shootTimer <= 0) {
+            droneBullets.push({
+              x: h.x + h.size / 2 - 3,
+              y: h.y + h.size,
+              width: 6,
+              height: 14,
+              speed: 4 + hazardSpeedMultiplier
+            });
+            h.shootTimer = Math.random() * 100 + 50;
+          }
+        }
+      }
+
+      for (let b of droneBullets) {
+        b.y += b.speed;
+      }
+
+      for (let i = droneBullets.length - 1; i >= 0; i--) {
+        if (droneBullets[i].y > canvas.height) droneBullets.splice(i, 1);
+      }
+
+      for (let i = hazards.length - 1; i >= 0; i--) {
+        for (let j = bullets.length - 1; j >= 0; j--) {
+          const h = hazards[i];
+          const b = bullets[j];
+          if (
+            b.x < h.x + h.size &&
+            b.x + b.width > h.x &&
+            b.y < h.y + h.size &&
+            b.y + b.height > h.y
+          ) {
+            hazards.splice(i, 1);
+            bullets.splice(j, 1);
+            break;
+          }
+        }
+      }
+
+      for (let h of hazards) {
+        if (
+          player.x < h.x + h.size &&
+          player.x + player.size > h.x &&
+          player.y < h.y + h.size &&
+          player.y + player.size > h.y
+        ) {
+          gameOver = true;
+          scoreDisplay.textContent = `💥 Crashed! Survived: ${Math.floor((Date.now() - startTime) / 1000)}s`;
+        }
+      }
+
+      for (let b of droneBullets) {
+        if (
+          player.x < b.x + b.width &&
+          player.x + player.size > b.x &&
+          player.y < b.y + b.height &&
+          player.y + player.size > b.y
+        ) {
+          gameOver = true;
+          scoreDisplay.textContent = `💥 Shot down! Survived: ${Math.floor((Date.now() - startTime) / 1000)}s`;
+        }
+      }
+
+      let time = Math.floor((Date.now() - startTime) / 1000);
+      if (!gameOver) {
+        scoreDisplay.textContent = `⏱️ ${time}s`;
+      }
+
+      if (time > 0 && time % 10 === 0 && spawnRate > 300) {
+        spawnRate -= 100;
+        hazardSpeedMultiplier += 0.3;
+        clearInterval(spawnTimer);
+        spawnTimer = setInterval(spawnHazard, spawnRate);
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.font = `${player.size}px serif`;
+      ctx.fillText(player.emoji, player.x, player.y + player.size);
+
+      for (let h of hazards) {
+        ctx.font = `${h.size}px serif`;
+        ctx.fillText(h.emoji, h.x, h.y + h.size);
+      }
+
+      ctx.fillStyle = "yellow";
+      for (let b of bullets) {
+        ctx.fillRect(b.x, b.y, b.width, b.height);
+      }
+
+      ctx.fillStyle = "red";
+      for (let b of droneBullets) {
+        ctx.fillRect(b.x, b.y, b.width, b.height);
+      }
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      if (!gameOver) requestAnimationFrame(gameLoop);
+    }
+
+    let spawnTimer = setInterval(spawnHazard, spawnRate);
+    gameLoop();
+  </script>
+</body>
+</html>
